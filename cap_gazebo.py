@@ -30,23 +30,15 @@ class CtfNode:
         self.env = env
         self.flags = {}
         self.agents = agents
+        self.goals = self.get_agent_positions()
+        self.env.render()
         self.flag_names = ["flag_blue", "flag_red"]
+        self.gazebo_model_check = False
         # Get initial agent and obstacles locations
         obs = self.get_obstacle_positions()
         bots = self.get_agent_positions()
         team_flags = self.get_flag_positions()
-
-        # Load all Gazebo models for initial spawning
-        self.load_gazebo_models()
-        gzModels = self.get_gazebo_world_models()
-        self.clear_obstacles(gzModels[0])
-        self.move_models(agents,bots, True)
-
-        if len(gzModels[1]) is 0:
-            self.spawn_flags(team_flags)
-        else:
-            self.move_models(flag_names,team_flags, False)
-        self.spawn_obstacles(obs)
+        print(team_flags)
 
         # Start ROS node for ROS components
         rospy.init_node('cap_gazebo_node')
@@ -55,18 +47,28 @@ class CtfNode:
         # Setup ROS subscribers and publishers
         goalTopics = [str(bot)+'/goal' for bot in agents]
         flagTopics = [[str(bot)+'/flag/ready',str(bot)] for bot in agents]
-        self.pubs = [rospy.Publisher(topic, Point, queue_size=10) for topic in goalTopics]
+        self.pubs = [rospy.Publisher(topic, Point, queue_size=20) for topic in goalTopics]
         self.subs = [rospy.Subscriber(topic, Bool, self.flagCallback, str(bot)) for topic,bot in flagTopics]
+        self.gazsub = rospy.Subscriber("/gazebo/model_states", ModelStates, self.gazCallback)
 
+        # Load all Gazebo models for initial spawning
+        self.load_gazebo_models()
+        # gzModels = self.get_gazebo_world_models()
+        while not self.gazebo_model_check:
+            print("Sleeping")
+            self.r.sleep()
+        # self.clear_obstacles(self.models[0])
+        self.move_models(agents,bots, True)
+        if len(self.models[1]) is 0:
+            self.spawn_flags(team_flags)
+        else:
+            self.move_models(self.flag_names,team_flags, False)
 
-
-
-
-
-
+        # self.spawn_obstacles(obs)
 
 
     def move_models(self, names, positions, isBot=False):
+        rospy.wait_for_service("/gazebo/set_model_state")
         g_set_state = rospy.ServiceProxy("/gazebo/set_model_state",SetModelState)
 
         for i in xrange(0,len(positions)):
@@ -86,15 +88,22 @@ class CtfNode:
             try:
                 ret = g_set_state(state)
                 print ret.status_message
+                self.r.sleep()
             except Exception, e:
                 rospy.logerr('Error on calling service: %s',str(e))
 
     def flagCallback(self, data, args):
         self.flags[args] = data.data
 
+    def gazCallback(self, data):
+        models = data.name
+        gzObs = [name for name in models if fnmatch.fnmatch(name, 'obstacle_*')]
+        gzGoals = [name for name in models if fnmatch.fnmatch(name, 'flag*')]
+        self.models = [gzObs,gzGoals]
+        self.gazebo_model_check = True
 
     def step(self):
-        self.observation, self.score, self.done, _ = env.step()  # feedback from environment
+        self.observation, self.score, self.done, _ = self.env.step()  # feedback from environment
         self.render()
         self.steps += 1
 
@@ -104,22 +113,19 @@ class CtfNode:
 
     def loop(self):
         while not self.done:
-            if(self.steps == 0):
-                isReady = True
-            else:
-                isReady = self.update_gazebo_flags()
-
-            if(isReady):
-                print("Stepping")
-                self.goals = self.get_agent_positions()
-                self.env.step();
+            while not self.update_gazebo_flags():
                 self.update_gazebo_goals()
-                if self.steps == self.maxsteps:
-                    break
+                self.r.sleep()
+
+            print("Stepping")
+            self.goals = self.get_agent_positions()
+            self.step()
+            self.update_gazebo_goals()
+            if self.steps == self.maxsteps:
+                break
 
     def run(self):
         while True:
-            self.env.reset()
             self.loop()
             self.done = False
             print("Score: %.2f" % self.reward)
@@ -172,7 +178,7 @@ class CtfNode:
     def update_gazebo_flags(self):
         flags = self.flags
         isReady = all(flag==True for flag in flags.values() )
-        print("isReady: ",isReady)
+        print("isReady: ",flags)
         return isReady
 
     def load_gazebo_models(self):
@@ -213,10 +219,10 @@ class CtfNode:
             try:
                 ret = s(model_name, self.obstacle_xml, "", model_pose, "world")
                 print ret.status_message
-                s.close()
-                # time.sleep(0.1)
             except Exception, e:
                 rospy.logerr('Error on calling service: %s',str(e))
+            # self.r.sleep()
+        s.close()
 
 
     def spawn_flags(self, positions):
@@ -247,9 +253,10 @@ class CtfNode:
             try:
                 ret = s(model_name, model_xml, "", model_pose, "world")
                 print ret.status_message
-                s.close()
+                # self.r.sleep()
             except Exception, e:
                 rospy.logerr('Error on calling service: %s',str(e))
+        s.close()
 
     def get_gazebo_world_models(self):
         print("Waiting for Gazebo service [gazebo/get_world_properties]...")
@@ -266,18 +273,19 @@ class CtfNode:
     def clear_obstacles(self, models):
         nObs = len(models)
         print(nObs)
-        rospy.wait_for_service("gazebo/delete_model")
-        # d = rospy.ServiceProxy("gazebo/delete_model", DeleteModel)
+        # rospy.wait_for_service("gazebo/delete_model")
         d = rospy.ServiceProxy("gazebo/delete_model", DeleteModel)
         for num in xrange(0,nObs):
             try:
                 model_name = "obstacle_{0}".format(num)
                 print("Deleting model:%s", model_name)
-                ret = d(model_name)
+                ret = d(str(model_name))
                 print ret.status_message
+                # rosservice call gazebo/delete_model '{model_name: coffee_cup}'
+                # d.close()
             except Exception, e:
                 rospy.logerr('Error on calling service: %s',str(e))
-            # d.close()
+            # self.r.sleep()
 
         d.close()
 
