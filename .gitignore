@@ -5,3 +5,5 @@
 */build
 */*.egg-info
 */dist
+.tags
+.tags_swap
