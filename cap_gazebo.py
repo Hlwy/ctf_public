@@ -41,8 +41,8 @@ class CtfNode:
         # Get initial agent and obstacles locations
         obs = self.get_obstacle_positions()
         bots = self.get_agent_positions()
-        team_flags = self.get_flag_positions()
-        print(team_flags)
+        self.team_flags = self.get_flag_positions()
+        print(self.team_flags)
 
         # Start ROS node for ROS components
         rospy.init_node('cap_gazebo_node')
@@ -66,12 +66,13 @@ class CtfNode:
         if len(self.models[1]) is 0:
             self.spawn_flags(team_flags)
         else:
-            self.move_models(self.flag_names,team_flags)
+            self.move_models(self.flag_names,self.team_flags)
 
 
         # self.spawn_obstacles(obs)
         self.clear_rviz_obstacles()
         self.spawn_rviz_obstacles(obs)
+        self.spawn_rviz_flags(self.team_flags)
 
 
     def move_models(self, names, positions, isBot=False):
@@ -122,7 +123,8 @@ class CtfNode:
         while not self.done:
             while not self.update_gazebo_flags():
                 self.update_gazebo_goals()
-                self.r.sleep()
+                self.spawn_rviz_flags(self.team_flags)
+                # self.r.sleep()
 
             print("Stepping")
             self.goals = self.get_agent_positions()
@@ -272,38 +274,49 @@ class CtfNode:
 
     def spawn_rviz_flags(self, positions):
         topic = 'visualization_flags'
-        publisher = rospy.Publisher(topic, MarkerArray)
-        markerArray = MarkerArray()
+        publisher = rospy.Publisher(topic, Marker, queue_size=2)
+        publisher1 = rospy.Publisher('rviz/blue_flag', Marker, queue_size=2)
+        publisher2 = rospy.Publisher('rviz/red_flag', Marker, queue_size=2)
         count = 0
     	for num in xrange(0,len(positions)):
             marker = Marker()
+            marker.type = Marker.MESH_RESOURCE
+            marker.action = Marker.ADD
             marker.header.frame_id = "/world"
-            # marker.type = visualization_msgs::Marker::MESH_RESOURCE;
-            # marker.mesh_resource = "package://pr2_description/meshes/base_v0/base.dae";
-            marker.action = marker.ADD
-            marker.lifetime = rospy.Duration(1)
-            marker.scale.x = 0.2
-            marker.scale.y = 0.2
-            marker.scale.z = 0.2
-            marker.color.a = 1.0
-            marker.color.r = 1.0
-            marker.color.g = 1.0
-            marker.color.b = 1.0
+            marker.mesh_resource = "package://terrasentia_models/flag/meshes/flag.dae"
+            marker.scale.x = 1.0
+            marker.scale.y = 1.0
+            marker.scale.z = 1.0
+
             marker.pose.position.x = positions[num][0] - self.map_offset
             marker.pose.position.y = positions[num][1] - self.map_offset
             marker.pose.position.z = 0
             marker.pose.orientation.w = 1.0
 
-            # if(count > MARKERS_MAX):
-            #     markerArray.markers.pop(0)
-            markerArray.markers.append(marker)
-            id = 0
-            for m in markerArray.markers:
-                m.id = id
-                id += 1
-            publisher.publish(markerArray)
-            count +=1
-            self.r.sleep()
+            if num is 0:
+                marker.ns = "/blue_flag"
+                marker.color.r = 0.0
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+                marker.color.a = 1.0
+                publisher1.publish(marker)
+                self.r.sleep()
+            elif num is 1:
+                marker.ns = "/red_flag"
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+                marker.color.a = 1.0
+                publisher2.publish(marker)
+                self.r.sleep()
+            else:
+                dump = None
+                # publisher.publish(marker)
+                count +=1
+                self.r.sleep()
+
+
+
 
     def spawn_flags(self, positions):
         print("Waiting for gazebo services...")
