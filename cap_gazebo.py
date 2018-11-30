@@ -64,7 +64,7 @@ class CtfNode:
         # self.clear_obstacles(self.models[0])
         self.move_models(agents,bots, True)
         if len(self.models[1]) is 0:
-            self.spawn_flags(team_flags)
+            self.spawn_flags(self.team_flags)
         else:
             self.move_models(self.flag_names,self.team_flags)
 
